@@ -17,7 +17,7 @@ async fn handler(event: LambdaEvent<Payload>) -> LambdaResult<()> {
 
 #[tokio::main]
 async fn main() -> LambdaResult<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt().with_ansi(false).init();
 
     lambda_runtime::run(service_fn(handler)).await?;
 
