@@ -1,9 +1,16 @@
+use chrono::{DateTime, Utc};
 use lambda_runtime::{service_fn, LambdaEvent};
+use serde::Deserialize;
 
 type LambdaResult<T> = std::result::Result<T, lambda_runtime::Error>;
 
-async fn handler(event: LambdaEvent<()>) -> LambdaResult<()> {
-    tracing::info!(payload = ?event.payload, "Received an event for the lambda invocation!");
+#[derive(Debug, Deserialize)]
+struct Payload {
+    time: DateTime<Utc>,
+}
+
+async fn handler(event: LambdaEvent<Payload>) -> LambdaResult<()> {
+    tracing::info!(time = %event.payload.time, "Received an event for the lambda invocation!");
 
     Ok(())
 }
