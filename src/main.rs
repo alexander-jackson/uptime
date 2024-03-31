@@ -1,25 +1,69 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
 use chrono::{DateTime, Utc};
-use lambda_runtime::{service_fn, LambdaEvent};
+use lambda_runtime::{LambdaEvent, Service};
 use serde::Deserialize;
 
 type LambdaResult<T> = std::result::Result<T, lambda_runtime::Error>;
+type BoxFuture<O> = Pin<Box<dyn Future<Output = O> + Send>>;
 
 #[derive(Debug, Deserialize)]
 struct Payload {
     time: DateTime<Utc>,
 }
 
-async fn handler(event: LambdaEvent<Payload>) -> LambdaResult<()> {
-    tracing::info!(time = %event.payload.time, "Received an event for the lambda invocation!");
+#[derive(Clone, Debug)]
+struct Handler {
+    target: Arc<String>,
+    request_client: reqwest::Client,
+}
 
-    Ok(())
+impl Handler {
+    async fn handle(&self, event: LambdaEvent<Payload>) -> LambdaResult<()> {
+        tracing::info!(time = %event.payload.time, "Received an event for the lambda invocation!");
+
+        let response = self.request_client.get(self.target.as_ref()).send().await?;
+        let status = response.status().as_u16();
+
+        tracing::info!(%status, "Got a response from the upstream server");
+
+        Ok(())
+    }
+}
+
+impl Service<LambdaEvent<Payload>> for Handler {
+    type Response = ();
+    type Error = lambda_runtime::Error;
+    type Future = BoxFuture<Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: LambdaEvent<Payload>) -> Self::Future {
+        let handler = self.clone();
+
+        Box::pin(async move { handler.handle(req).await })
+    }
 }
 
 #[tokio::main]
 async fn main() -> LambdaResult<()> {
     tracing_subscriber::fmt().with_ansi(false).init();
 
-    lambda_runtime::run(service_fn(handler)).await?;
+    let target = std::env::var("TARGER_URI")?;
+    let target = Arc::from(target);
+
+    let request_client = reqwest::Client::new();
+    let handler = Handler {
+        target,
+        request_client,
+    };
+
+    lambda_runtime::run(handler).await?;
 
     Ok(())
 }
