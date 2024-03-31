@@ -67,7 +67,7 @@ impl Service<LambdaEvent<Payload>> for Handler {
 async fn main() -> LambdaResult<()> {
     tracing_subscriber::fmt().with_ansi(false).init();
 
-    let target = std::env::var("TARGER_URI")?;
+    let target = std::env::var("TARGET_URI")?;
     let target = Arc::from(target);
 
     let request_client = reqwest::Client::new();
