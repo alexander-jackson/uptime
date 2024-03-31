@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use chrono::{DateTime, Utc};
-use lambda_runtime::{LambdaEvent, Service};
+use lambda_runtime::{Config, LambdaEvent, Service};
+use reqwest::header::USER_AGENT;
 use serde::Deserialize;
 
 type LambdaResult<T> = std::result::Result<T, lambda_runtime::Error>;
@@ -25,7 +26,19 @@ impl Handler {
     async fn handle(&self, event: LambdaEvent<Payload>) -> LambdaResult<()> {
         tracing::info!(time = %event.payload.time, "Received an event for the lambda invocation!");
 
-        let response = self.request_client.get(self.target.as_ref()).send().await?;
+        let Config {
+            function_name,
+            version,
+            ..
+        } = event.context.env_config.as_ref();
+
+        let response = self
+            .request_client
+            .get(self.target.as_ref())
+            .header(USER_AGENT, format!("{function_name}:{version}"))
+            .send()
+            .await?;
+
         let status = response.status().as_u16();
 
         tracing::info!(%status, "Got a response from the upstream server");
