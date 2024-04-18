@@ -1,12 +1,15 @@
 use std::future::Future;
+use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::primitives::ByteStream;
 use chrono::{DateTime, Utc};
 use lambda_runtime::{Config, LambdaEvent, Service};
 use reqwest::header::USER_AGENT;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 type LambdaResult<T> = std::result::Result<T, lambda_runtime::Error>;
 type BoxFuture<O> = Pin<Box<dyn Future<Output = O> + Send>>;
@@ -16,10 +19,18 @@ struct Payload {
     time: DateTime<Utc>,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct State {
+    most_recent_status: Option<u16>,
+}
+
 #[derive(Clone, Debug)]
 struct Handler {
-    target: Arc<String>,
+    target: Arc<str>,
+    state_bucket: Arc<str>,
+    state_key: Arc<str>,
     request_client: reqwest::Client,
+    s3_client: aws_sdk_s3::Client,
 }
 
 impl Handler {
@@ -32,6 +43,17 @@ impl Handler {
             ..
         } = event.context.env_config.as_ref();
 
+        let state_response = self
+            .s3_client
+            .get_object()
+            .bucket(self.state_bucket.deref())
+            .key(self.state_key.deref())
+            .send()
+            .await?;
+
+        let bytes = state_response.body.collect().await?;
+        let state: State = serde_json::from_slice(&bytes.into_bytes())?;
+
         let response = self
             .request_client
             .get(self.target.as_ref())
@@ -42,6 +64,27 @@ impl Handler {
         let status = response.status().as_u16();
 
         tracing::info!(%status, "Got a response from the upstream server");
+
+        match state.most_recent_status {
+            Some(value) if value != status => {
+                tracing::warn!("Status response has changed");
+
+                let new_state = State {
+                    most_recent_status: Some(status),
+                };
+
+                let bytes = serde_json::to_vec(&new_state)?;
+
+                self.s3_client
+                    .put_object()
+                    .bucket(self.state_bucket.deref())
+                    .key(self.state_key.deref())
+                    .body(ByteStream::from(bytes))
+                    .send()
+                    .await?;
+            }
+            _ => (),
+        };
 
         Ok(())
     }
@@ -70,10 +113,20 @@ async fn main() -> LambdaResult<()> {
     let target = std::env::var("TARGET_URI")?;
     let target = Arc::from(target);
 
+    let state_bucket = Arc::from(std::env::var("STATE_BUCKET")?);
+    let state_key = Arc::from(std::env::var("STATE_KEY")?);
+
+    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+
     let request_client = reqwest::Client::new();
+    let s3_client = aws_sdk_s3::Client::new(&config);
+
     let handler = Handler {
         target,
+        state_bucket,
+        state_key,
         request_client,
+        s3_client,
     };
 
     lambda_runtime::run(handler).await?;
