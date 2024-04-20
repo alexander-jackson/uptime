@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use aws_config::BehaviorVersion;
+use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::{DateTime, Utc};
 use lambda_runtime::{Config, LambdaEvent, Service};
@@ -21,7 +22,7 @@ struct Payload {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct State {
-    most_recent_status: Option<u16>,
+    most_recent_status: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -36,7 +37,7 @@ struct Handler {
 impl Handler {
     async fn persist_state(&self, status: u16) -> LambdaResult<()> {
         let new_state = State {
-            most_recent_status: Some(status),
+            most_recent_status: status,
         };
 
         let bytes = serde_json::to_vec(&new_state)?;
@@ -67,10 +68,17 @@ impl Handler {
             .bucket(self.state_bucket.deref())
             .key(self.state_key.deref())
             .send()
-            .await?;
+            .await;
 
-        let bytes = state_response.body.collect().await?;
-        let state: State = serde_json::from_slice(&bytes.into_bytes())?;
+        let state: Option<State> = match state_response {
+            Ok(value) => {
+                let bytes = value.body.collect().await?;
+
+                Some(serde_json::from_slice(&bytes.into_bytes())?)
+            }
+            Err(SdkError::ServiceError(e)) if e.err().is_no_such_key() => None,
+            Err(e) => return Err(e.into()),
+        };
 
         let response = self
             .request_client
@@ -83,8 +91,8 @@ impl Handler {
 
         tracing::info!(%status, "Got a response from the upstream server");
 
-        match state.most_recent_status {
-            Some(value) if value != status => {
+        match state {
+            Some(value) if value.most_recent_status != status => {
                 tracing::warn!("Status response has changed");
                 self.persist_state(status).await?;
             }
