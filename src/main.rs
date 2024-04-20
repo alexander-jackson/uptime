@@ -34,6 +34,24 @@ struct Handler {
 }
 
 impl Handler {
+    async fn persist_state(&self, status: u16) -> LambdaResult<()> {
+        let new_state = State {
+            most_recent_status: Some(status),
+        };
+
+        let bytes = serde_json::to_vec(&new_state)?;
+
+        self.s3_client
+            .put_object()
+            .bucket(self.state_bucket.deref())
+            .key(self.state_key.deref())
+            .body(ByteStream::from(bytes))
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
     async fn handle(&self, event: LambdaEvent<Payload>) -> LambdaResult<()> {
         tracing::info!(time = %event.payload.time, "Received an event for the lambda invocation!");
 
@@ -68,20 +86,11 @@ impl Handler {
         match state.most_recent_status {
             Some(value) if value != status => {
                 tracing::warn!("Status response has changed");
-
-                let new_state = State {
-                    most_recent_status: Some(status),
-                };
-
-                let bytes = serde_json::to_vec(&new_state)?;
-
-                self.s3_client
-                    .put_object()
-                    .bucket(self.state_bucket.deref())
-                    .key(self.state_key.deref())
-                    .body(ByteStream::from(bytes))
-                    .send()
-                    .await?;
+                self.persist_state(status).await?;
+            }
+            None => {
+                tracing::info!("Got the first status for the response");
+                self.persist_state(status).await?;
             }
             _ => (),
         };
