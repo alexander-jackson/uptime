@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO query (query_uid, origin_id, status, latency_millis, queried_at)\n            VALUES (\n                $1,\n                (SELECT id FROM origin WHERE origin_uid = $2),\n                $3,\n                $4,\n                $5\n            )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int2",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "42d9d1bccc88af943290a4c7d00659919fede17b4f607264ec629441a5951a8c"
+}
