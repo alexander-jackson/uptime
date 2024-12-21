@@ -1,53 +1,53 @@
 use axum::extract::State;
 use axum::routing::get;
-use axum::{Json, Router};
-use serde::Deserialize;
+use axum::Router;
+use color_eyre::eyre::Result;
+use serde::Serialize;
 use sqlx::PgPool;
-use uuid::Uuid;
+use tower_http::services::ServeDir;
 
-use crate::persistence::Origin;
+use crate::persistence::IndexOrigin;
+use crate::templates::{RenderedTemplate, TemplateEngine};
 
 #[derive(Clone)]
 struct ApplicationState {
     pool: PgPool,
+    template_engine: TemplateEngine,
 }
 
-pub fn build(pool: PgPool) -> Router {
-    let state = ApplicationState { pool };
+pub fn build(pool: PgPool) -> Result<Router> {
+    let template_engine = TemplateEngine::new()?;
+    let state = ApplicationState {
+        pool,
+        template_engine,
+    };
 
-    Router::new()
-        .route("/origins", get(get_origins).put(put_origin))
-        .with_state(state)
+    let router = Router::new()
+        .route("/", get(index))
+        .nest_service("/assets", ServeDir::new("assets"))
+        .with_state(state);
+
+    Ok(router)
 }
 
-async fn get_origins(
-    State(ApplicationState { pool }): State<ApplicationState>,
-) -> Json<Vec<Origin>> {
-    let origins = crate::persistence::fetch_origins(&pool)
+#[derive(Serialize)]
+struct IndexContext {
+    origins: Vec<IndexOrigin>,
+}
+
+async fn index(
+    State(ApplicationState {
+        pool,
+        template_engine,
+    }): State<ApplicationState>,
+) -> RenderedTemplate {
+    let origins = crate::persistence::fetch_origins_with_most_recent_success_metrics(&pool)
         .await
         .expect("failed to fetch origins");
 
-    Json(origins)
-}
+    let context = IndexContext { origins };
 
-#[derive(Debug, Deserialize)]
-struct OriginCreationRequest {
-    uri: String,
-}
-
-async fn put_origin(
-    State(ApplicationState { pool }): State<ApplicationState>,
-    request: Json<OriginCreationRequest>,
-) -> Json<Uuid> {
-    let origin_uid = Uuid::new_v4();
-    let origin = Origin {
-        origin_uid,
-        uri: request.uri.clone(),
-    };
-
-    crate::persistence::insert_origin(&pool, &origin)
-        .await
-        .expect("failed to create origin");
-
-    Json(origin_uid)
+    template_engine
+        .render_serialized("index.tera.html", &context)
+        .expect("failed to render template")
 }

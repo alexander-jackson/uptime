@@ -12,6 +12,7 @@ use utils::get_env_var;
 mod persistence;
 mod poller;
 mod router;
+mod templates;
 mod utils;
 
 async fn setup() -> Result<PgPool> {
@@ -41,7 +42,7 @@ async fn main() -> Result<()> {
 
     let poller = Poller::new(pool.clone(), client);
 
-    let router = crate::router::build(pool.clone());
+    let router = crate::router::build(pool.clone())?;
     let addr = get_env_var("SERVER_ADDR")?;
     let listener = TcpListener::bind(addr).await?;
 
