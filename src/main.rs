@@ -1,152 +1,51 @@
-use std::future::Future;
-use std::ops::Deref;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use color_eyre::eyre::Result;
+use poller::Poller;
+use reqwest::Client;
+use sqlx::PgPool;
+use tokio::net::TcpListener;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
+use utils::get_env_var;
 
-use aws_config::BehaviorVersion;
-use aws_sdk_s3::error::SdkError;
-use aws_sdk_s3::primitives::ByteStream;
-use chrono::{DateTime, Utc};
-use lambda_runtime::{Config, LambdaEvent, Service};
-use reqwest::header::USER_AGENT;
-use serde::{Deserialize, Serialize};
+mod persistence;
+mod poller;
+mod router;
+mod utils;
 
-type LambdaResult<T> = std::result::Result<T, lambda_runtime::Error>;
-type BoxFuture<O> = Pin<Box<dyn Future<Output = O> + Send>>;
+async fn setup() -> Result<PgPool> {
+    dotenvy::dotenv().ok();
 
-#[derive(Debug, Deserialize)]
-struct Payload {
-    time: DateTime<Utc>,
+    color_eyre::install()?;
+
+    let fmt_layer = tracing_subscriber::fmt::layer();
+    let env_filter_layer = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env()?;
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(env_filter_layer)
+        .init();
+
+    let pool = crate::persistence::bootstrap().await?;
+
+    Ok(pool)
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct State {
-    most_recent_status: u16,
-}
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let pool = setup().await?;
+    let client = Client::new();
 
-#[derive(Clone, Debug)]
-struct Handler {
-    target: Arc<str>,
-    state_bucket: Arc<str>,
-    state_key: Arc<str>,
-    request_client: reqwest::Client,
-    s3_client: aws_sdk_s3::Client,
-}
+    let poller = Poller::new(pool.clone(), client);
 
-impl Handler {
-    async fn persist_state(&self, status: u16) -> LambdaResult<()> {
-        let new_state = State {
-            most_recent_status: status,
-        };
+    let router = crate::router::build(pool.clone());
+    let addr = get_env_var("SERVER_ADDR")?;
+    let listener = TcpListener::bind(addr).await?;
 
-        let bytes = serde_json::to_vec(&new_state)?;
-
-        self.s3_client
-            .put_object()
-            .bucket(self.state_bucket.deref())
-            .key(self.state_key.deref())
-            .body(ByteStream::from(bytes))
-            .send()
-            .await?;
-
-        Ok(())
-    }
-
-    async fn handle(&self, event: LambdaEvent<Payload>) -> LambdaResult<()> {
-        tracing::info!(time = %event.payload.time, "Received an event for the lambda invocation!");
-
-        let Config {
-            function_name,
-            version,
-            ..
-        } = event.context.env_config.as_ref();
-
-        let state_response = self
-            .s3_client
-            .get_object()
-            .bucket(self.state_bucket.deref())
-            .key(self.state_key.deref())
-            .send()
-            .await;
-
-        let state: Option<State> = match state_response {
-            Ok(value) => {
-                let bytes = value.body.collect().await?;
-
-                Some(serde_json::from_slice(&bytes.into_bytes())?)
-            }
-            Err(SdkError::ServiceError(e)) if e.err().is_no_such_key() => None,
-            Err(e) => return Err(e.into()),
-        };
-
-        let response = self
-            .request_client
-            .get(self.target.as_ref())
-            .header(USER_AGENT, format!("{function_name}:{version}"))
-            .send()
-            .await?;
-
-        let status = response.status().as_u16();
-
-        tracing::info!(%status, "Got a response from the upstream server");
-
-        match state {
-            Some(value) if value.most_recent_status != status => {
-                tracing::warn!("Status response has changed");
-                self.persist_state(status).await?;
-            }
-            None => {
-                tracing::info!("Got the first status for the response");
-                self.persist_state(status).await?;
-            }
-            _ => (),
-        };
-
-        Ok(())
-    }
-}
-
-impl Service<LambdaEvent<Payload>> for Handler {
-    type Response = ();
-    type Error = lambda_runtime::Error;
-    type Future = BoxFuture<Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: LambdaEvent<Payload>) -> Self::Future {
-        let handler = self.clone();
-
-        Box::pin(async move { handler.handle(req).await })
-    }
-}
-
-#[tokio::main]
-async fn main() -> LambdaResult<()> {
-    tracing_subscriber::fmt().with_ansi(false).init();
-
-    let target = std::env::var("TARGET_URI")?;
-    let target = Arc::from(target);
-
-    let state_bucket = Arc::from(std::env::var("STATE_BUCKET")?);
-    let state_key = Arc::from(std::env::var("STATE_KEY")?);
-
-    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-
-    let request_client = reqwest::Client::new();
-    let s3_client = aws_sdk_s3::Client::new(&config);
-
-    let handler = Handler {
-        target,
-        state_bucket,
-        state_key,
-        request_client,
-        s3_client,
-    };
-
-    lambda_runtime::run(handler).await?;
+    let _ = tokio::join!(poller.run(), axum::serve(listener, router));
 
     Ok(())
 }
