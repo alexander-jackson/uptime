@@ -42,29 +42,42 @@ pub struct Origin {
     pub uri: String,
 }
 
-pub async fn insert_origin(pool: &PgPool, origin: &Origin) -> Result<()> {
-    let Origin { origin_uid, uri } = origin;
-
-    sqlx::query!(
-        r#"
-            INSERT INTO origin (origin_uid, uri)
-            VALUES ($1, $2)
-        "#,
-        origin_uid,
-        uri,
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
 pub async fn fetch_origins(pool: &PgPool) -> Result<Vec<Origin>> {
     let origins = sqlx::query_as!(
         Origin,
         r#"
             SELECT origin_uid, uri
             FROM origin
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(origins)
+}
+
+#[derive(Serialize)]
+pub struct IndexOrigin {
+    uri: String,
+    status: i16,
+    latency_millis: i64,
+    queried_at: DateTime<Utc>,
+}
+
+pub async fn fetch_origins_with_most_recent_success_metrics(
+    pool: &PgPool,
+) -> Result<Vec<IndexOrigin>> {
+    let origins = sqlx::query_as!(
+        IndexOrigin,
+        r#"
+            SELECT DISTINCT ON (o.uri)
+                o.uri,
+                q.status,
+                q.latency_millis,
+                q.queried_at
+            FROM origin o
+            JOIN query q ON o.id = q.origin_id
+            ORDER BY o.uri, q.queried_at DESC
         "#
     )
     .fetch_all(pool)
