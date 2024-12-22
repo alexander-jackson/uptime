@@ -18,15 +18,24 @@ impl TemplateEngine {
         Ok(Self { inner })
     }
 
+    fn render(&self, template: &str, context: &Context) -> Result<RenderedTemplate> {
+        let rendered = self.inner.render(template, context)?;
+
+        Ok(RenderedTemplate { inner: rendered })
+    }
+
     pub fn render_serialized<C: Serialize>(
         &self,
         template: &str,
         context: &C,
     ) -> Result<RenderedTemplate> {
         let context = Context::from_serialize(context)?;
-        let rendered = self.inner.render(template, &context)?;
 
-        Ok(RenderedTemplate { inner: rendered })
+        self.render(template, &context)
+    }
+
+    pub fn render_contextless(&self, template: &str) -> Result<RenderedTemplate> {
+        self.render(template, &Context::default())
     }
 }
 

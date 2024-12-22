@@ -10,6 +10,8 @@
   <body class="container">
     <h1>Uptime</h1>
 
+    <a href="/add-origin">Add Origin</a>
+
     <table>
       <tr>
         <th>Uri</th>
@@ -23,6 +25,22 @@
         <td>{{ origin.uri }}</td>
         <td>{{ origin.status }}</td>
         <td>{{ origin.latency_millis }}ms</td>
+        <td>{{ origin.queried_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <table>
+      <tr>
+        <th>Uri</th>
+        <th>Reason</th>
+        <th>Queried</th>
+      </tr>
+
+      {% for origin in failing_origins %}
+      <tr>
+        <td>{{ origin.uri }}</td>
+        <td>{{ origin.failure_reason }}</td>
         <td>{{ origin.queried_at }}</td>
       </tr>
       {% endfor %}
