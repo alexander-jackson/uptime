@@ -145,3 +145,6 @@ impl Poller {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
