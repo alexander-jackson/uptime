@@ -25,7 +25,7 @@
         <td>{{ origin.uri }}</td>
         <td>{{ origin.status }}</td>
         <td>{{ origin.latency_millis }}ms</td>
-        <td>{{ origin.queried_at }}</td>
+        <td>{{ origin.queried }} ago</td>
       </tr>
       {% endfor %}
     </table>
@@ -41,7 +41,7 @@
       <tr>
         <td>{{ origin.uri }}</td>
         <td>{{ origin.failure_reason }}</td>
-        <td>{{ origin.queried_at }}</td>
+        <td>{{ origin.queried }} ago</td>
       </tr>
       {% endfor %}
     </table>

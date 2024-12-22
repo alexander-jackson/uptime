@@ -71,12 +71,11 @@ pub async fn fetch_origins(pool: &PgPool) -> Result<Vec<Origin>> {
     Ok(origins)
 }
 
-#[derive(Serialize)]
 pub struct IndexOrigin {
-    uri: String,
-    status: i16,
-    latency_millis: i64,
-    queried_at: DateTime<Utc>,
+    pub uri: String,
+    pub status: i16,
+    pub latency_millis: i64,
+    pub queried_at: DateTime<Utc>,
 }
 
 pub async fn fetch_origins_with_most_recent_success_metrics(
@@ -101,11 +100,10 @@ pub async fn fetch_origins_with_most_recent_success_metrics(
     Ok(origins)
 }
 
-#[derive(Serialize)]
 pub struct OriginFailure {
-    uri: String,
-    failure_reason: String,
-    queried_at: DateTime<Utc>,
+    pub uri: String,
+    pub failure_reason: String,
+    pub queried_at: DateTime<Utc>,
 }
 
 pub async fn fetch_origins_with_most_recent_failure_metrics(
