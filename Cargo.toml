@@ -11,6 +11,7 @@ axum = "0.7.9"
 chrono = { version = "0.4.39", features = ["serde"] }
 color-eyre = "0.6.3"
 dotenvy = "0.15.7"
+humantime = "2.1.0"
 reqwest = { version = "0.12.9", default-features = false, features = ["rustls-tls", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0.216", features = ["derive"] }
 sqlx = { version = "0.8.2", default-features = false, features = ["chrono", "macros", "migrate", "postgres", "runtime-tokio-rustls", "uuid"] }

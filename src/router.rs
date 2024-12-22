@@ -1,14 +1,17 @@
+use std::time::Duration;
+
 use axum::extract::State;
 use axum::response::Redirect;
 use axum::routing::get;
 use axum::{Form, Router};
+use chrono::Utc;
 use color_eyre::eyre::Result;
+use humantime::format_duration;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
-use crate::persistence::{IndexOrigin, OriginFailure};
 use crate::templates::{RenderedTemplate, TemplateEngine};
 
 #[derive(Clone)]
@@ -34,6 +37,21 @@ pub fn build(pool: PgPool) -> Result<Router> {
 }
 
 #[derive(Serialize)]
+struct IndexOrigin {
+    uri: String,
+    status: u16,
+    latency_millis: u64,
+    queried: String,
+}
+
+#[derive(Serialize)]
+struct OriginFailure {
+    uri: String,
+    failure_reason: String,
+    queried: String,
+}
+
+#[derive(Serialize)]
 struct IndexContext {
     origins: Vec<IndexOrigin>,
     failing_origins: Vec<OriginFailure>,
@@ -47,11 +65,36 @@ async fn index(
 ) -> RenderedTemplate {
     let origins = crate::persistence::fetch_origins_with_most_recent_success_metrics(&pool)
         .await
-        .expect("failed to fetch origins");
+        .expect("failed to fetch origins")
+        .into_iter()
+        .map(|origin| {
+            let delta = (Utc::now() - origin.queried_at).abs();
+            let duration = Duration::from_millis(delta.num_milliseconds() as u64);
+
+            IndexOrigin {
+                uri: origin.uri,
+                status: origin.status as u16,
+                latency_millis: origin.latency_millis as u64,
+                queried: format_duration(duration).to_string(),
+            }
+        })
+        .collect();
 
     let failing_origins = crate::persistence::fetch_origins_with_most_recent_failure_metrics(&pool)
         .await
-        .expect("failed to fetch failing origins");
+        .expect("failed to fetch failing origins")
+        .into_iter()
+        .map(|origin| {
+            let delta = (Utc::now() - origin.queried_at).abs();
+            let duration = Duration::from_millis(delta.num_milliseconds() as u64);
+
+            OriginFailure {
+                uri: origin.uri,
+                failure_reason: origin.failure_reason,
+                queried: format_duration(duration).to_string(),
+            }
+        })
+        .collect();
 
     let context = IndexContext {
         origins,
