@@ -1,12 +1,14 @@
 use axum::extract::State;
+use axum::response::Redirect;
 use axum::routing::get;
-use axum::Router;
+use axum::{Form, Router};
 use color_eyre::eyre::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tower_http::services::ServeDir;
+use uuid::Uuid;
 
-use crate::persistence::IndexOrigin;
+use crate::persistence::{IndexOrigin, OriginFailure};
 use crate::templates::{RenderedTemplate, TemplateEngine};
 
 #[derive(Clone)]
@@ -24,6 +26,7 @@ pub fn build(pool: PgPool) -> Result<Router> {
 
     let router = Router::new()
         .route("/", get(index))
+        .route("/add-origin", get(add_origin_template).post(add_origin))
         .nest_service("/assets", ServeDir::new("assets"))
         .with_state(state);
 
@@ -33,6 +36,7 @@ pub fn build(pool: PgPool) -> Result<Router> {
 #[derive(Serialize)]
 struct IndexContext {
     origins: Vec<IndexOrigin>,
+    failing_origins: Vec<OriginFailure>,
 }
 
 async fn index(
@@ -45,9 +49,44 @@ async fn index(
         .await
         .expect("failed to fetch origins");
 
-    let context = IndexContext { origins };
+    let failing_origins = crate::persistence::fetch_origins_with_most_recent_failure_metrics(&pool)
+        .await
+        .expect("failed to fetch failing origins");
+
+    let context = IndexContext {
+        origins,
+        failing_origins,
+    };
 
     template_engine
         .render_serialized("index.tera.html", &context)
         .expect("failed to render template")
+}
+
+async fn add_origin_template(
+    State(ApplicationState {
+        template_engine, ..
+    }): State<ApplicationState>,
+) -> RenderedTemplate {
+    template_engine
+        .render_contextless("add-origin.tera.html")
+        .expect("failed to render template")
+}
+
+#[derive(Deserialize)]
+struct OriginCreationRequest {
+    uri: String,
+}
+
+async fn add_origin(
+    State(ApplicationState { pool, .. }): State<ApplicationState>,
+    Form(OriginCreationRequest { uri }): Form<OriginCreationRequest>,
+) -> Redirect {
+    let origin_uid = Uuid::new_v4();
+
+    crate::persistence::insert_origin(&pool, origin_uid, &uri)
+        .await
+        .expect("failed to insert origin");
+
+    Redirect::to("/")
 }

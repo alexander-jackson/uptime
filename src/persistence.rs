@@ -42,6 +42,21 @@ pub struct Origin {
     pub uri: String,
 }
 
+pub async fn insert_origin(pool: &PgPool, origin_uid: Uuid, uri: &str) -> Result<()> {
+    sqlx::query!(
+        r#"
+            INSERT INTO origin (origin_uid, uri)
+            VALUES ($1, $2)
+        "#,
+        origin_uid,
+        uri,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn fetch_origins(pool: &PgPool) -> Result<Vec<Origin>> {
     let origins = sqlx::query_as!(
         Origin,
@@ -78,6 +93,35 @@ pub async fn fetch_origins_with_most_recent_success_metrics(
             FROM origin o
             JOIN query q ON o.id = q.origin_id
             ORDER BY o.uri, q.queried_at DESC
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(origins)
+}
+
+#[derive(Serialize)]
+pub struct OriginFailure {
+    uri: String,
+    failure_reason: String,
+    queried_at: DateTime<Utc>,
+}
+
+pub async fn fetch_origins_with_most_recent_failure_metrics(
+    pool: &PgPool,
+) -> Result<Vec<OriginFailure>> {
+    let origins = sqlx::query_as!(
+        OriginFailure,
+        r#"
+            SELECT DISTINCT ON (o.uri)
+                o.uri,
+                qfr.name AS failure_reason,
+                qf.queried_at
+            FROM origin o
+            JOIN query_failure qf ON o.id = qf.origin_id
+            JOIN query_failure_reason qfr ON qfr.id = qf.failure_reason_id
+            ORDER BY o.uri, qf.queried_at DESC
         "#
     )
     .fetch_all(pool)
