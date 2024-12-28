@@ -7,6 +7,8 @@ edition = "2021"
 strip = true
 
 [dependencies]
+aws-config = "1.5.11"
+aws-sdk-sns = "1.52.0"
 axum = "0.7.9"
 chrono = { version = "0.4.39", features = ["serde"] }
 color-eyre = "0.6.3"

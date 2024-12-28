@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO notification (notification_uid, origin_id, topic, subject, message, created_at)\n            VALUES (\n                $1,\n                (SELECT id FROM origin WHERE origin_uid = $2),\n                $3,\n                $4,\n                $5,\n                $6\n            )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d5cec834c2b2b85a843aee9ada9eb4e5e15141cc1ae4f00b9340e231bf79b07"
+}
