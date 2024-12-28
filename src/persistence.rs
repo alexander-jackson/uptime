@@ -1,5 +1,6 @@
 use std::ops::DerefMut;
 
+use chrono::Duration;
 use color_eyre::eyre::Result;
 use serde::Serialize;
 use sqlx::types::chrono::{DateTime, Utc};
@@ -187,4 +188,96 @@ pub async fn insert_query_failure(
     .await?;
 
     Ok(query_failure_uid)
+}
+
+pub async fn failure_rate_exceeded(
+    pool: &PgPool,
+    origin_uid: Uuid,
+    limit: u16,
+    period: Duration,
+) -> Result<bool> {
+    let end = Utc::now();
+    let start = end - period;
+
+    let exceeded = sqlx::query_scalar!(
+        r#"
+            SELECT COUNT(*) >= $2
+            FROM query_failure qf
+            JOIN origin o ON o.id = qf.origin_id
+            WHERE o.origin_uid = $1
+            AND qf.queried_at BETWEEN $3 AND $4
+        "#,
+        origin_uid,
+        limit as i32,
+        start,
+        end,
+    )
+    .fetch_one(pool)
+    .await?
+    .expect("Count returned a null value");
+
+    Ok(exceeded)
+}
+
+pub async fn insert_notification(
+    pool: &PgPool,
+    origin_uid: Uuid,
+    topic: &str,
+    subject: &str,
+    message: &str,
+    created_at: DateTime<Utc>,
+) -> Result<Uuid> {
+    let notification_uid = Uuid::new_v4();
+
+    sqlx::query!(
+        r#"
+            INSERT INTO notification (notification_uid, origin_id, topic, subject, message, created_at)
+            VALUES (
+                $1,
+                (SELECT id FROM origin WHERE origin_uid = $2),
+                $3,
+                $4,
+                $5,
+                $6
+            )
+        "#,
+        notification_uid,
+        origin_uid,
+        topic,
+        subject,
+        message,
+        created_at
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(notification_uid)
+}
+
+pub async fn latest_notification_older_than(
+    pool: &PgPool,
+    origin_uid: Uuid,
+    cooldown: Duration,
+) -> Result<bool> {
+    let boundary = Utc::now() - cooldown;
+
+    let notification = sqlx::query_scalar!(
+        r#"
+            SELECT NOT EXISTS (
+                SELECT
+                FROM notification n
+                JOIN origin o ON o.id = n.origin_id
+                WHERE o.origin_uid = $1
+                AND n.created_at > $2
+                LIMIT 1
+            )
+        "#,
+        origin_uid,
+        boundary,
+    )
+    .fetch_one(pool)
+    .await?
+    .expect("Exists returned a null value");
+
+    Ok(notification)
 }

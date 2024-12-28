@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT NOT EXISTS (\n                SELECT\n                FROM notification n\n                JOIN origin o ON o.id = n.origin_id\n                WHERE o.origin_uid = $1\n                AND n.created_at > $2\n                LIMIT 1\n            )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c1f99922f4fadc471ef4a3d127b95d312072a4542a09c12664e7aef5b6f68683"
+}

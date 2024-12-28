@@ -2,9 +2,9 @@ use std::fmt::{self, Display};
 use std::time::Duration;
 
 use color_eyre::eyre::Result;
-use reqwest::Client;
 use sqlx::types::chrono::Utc;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::persistence::Origin;
 
@@ -65,14 +65,78 @@ impl From<reqwest::Error> for FailureReason {
     }
 }
 
-pub struct Poller {
-    pool: PgPool,
-    client: Client,
+pub trait Notifier {
+    async fn notify(&self, topic: &str, subject: &str, message: &str) -> Result<()>;
 }
 
-impl Poller {
-    pub fn new(pool: PgPool, client: Client) -> Self {
-        Self { pool, client }
+impl Notifier for aws_sdk_sns::Client {
+    async fn notify(&self, topic: &str, subject: &str, message: &str) -> Result<()> {
+        self.publish()
+            .topic_arn(topic)
+            .subject(subject)
+            .message(message)
+            .send()
+            .await?;
+
+        Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AlertThreshold {
+    /// The number of failures that need to occur for a notification to be sent.
+    failure_limit: u16,
+    /// The window where failures must have occurred.
+    window_period: chrono::Duration,
+    /// The minimum amount of time between notifications.
+    cooldown: chrono::Duration,
+}
+
+impl Default for AlertThreshold {
+    fn default() -> Self {
+        Self {
+            failure_limit: 3,
+            window_period: chrono::Duration::minutes(5),
+            cooldown: chrono::Duration::hours(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PollerConfiguration {
+    alert_threshold: AlertThreshold,
+    topic: String,
+}
+
+impl PollerConfiguration {
+    pub fn new<T: Into<String>>(alert_threshold: AlertThreshold, topic: T) -> Self {
+        Self {
+            alert_threshold,
+            topic: topic.into(),
+        }
+    }
+}
+
+pub struct Poller<N> {
+    pool: PgPool,
+    http_client: reqwest::Client,
+    notifier: N,
+    configuration: PollerConfiguration,
+}
+
+impl<N: Notifier> Poller<N> {
+    pub fn new(
+        pool: PgPool,
+        http_client: reqwest::Client,
+        notifier: N,
+        configuration: PollerConfiguration,
+    ) -> Self {
+        Self {
+            pool,
+            http_client,
+            notifier,
+            configuration,
+        }
     }
 
     pub async fn run(&self) {
@@ -86,18 +150,19 @@ impl Poller {
     }
 
     async fn query_all_origins(&self) -> Result<()> {
-        let Self { pool, client } = self;
+        let Self {
+            pool, http_client, ..
+        } = self;
 
         // Find all the available origins
         let origins = crate::persistence::fetch_origins(pool).await?;
         let timeout = Duration::from_secs(3);
 
-        let mut tx = pool.begin().await?;
-
         for Origin { origin_uid, uri } in origins {
+            let mut tx = pool.begin().await?;
             let start = Utc::now();
 
-            match client.get(uri).timeout(timeout).send().await {
+            match http_client.get(&uri).timeout(timeout).send().await {
                 Ok(res) => {
                     let status = res.status();
                     let latency_millis = (Utc::now() - start).num_milliseconds();
@@ -138,9 +203,63 @@ impl Poller {
                     );
                 }
             }
+
+            tx.commit().await?;
+
+            // Check whether we need to notify someone
+            self.check_for_pending_notifications(origin_uid, &uri)
+                .await?;
         }
 
-        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn check_for_pending_notifications(&self, origin_uid: Uuid, uri: &str) -> Result<()> {
+        let PollerConfiguration {
+            alert_threshold,
+            topic,
+        } = &self.configuration;
+
+        let exceeded = crate::persistence::failure_rate_exceeded(
+            &self.pool,
+            origin_uid,
+            alert_threshold.failure_limit,
+            alert_threshold.window_period,
+        )
+        .await?;
+
+        if !exceeded {
+            tracing::debug!(%origin_uid, ?alert_threshold, "failure rate has not been exceeded");
+            return Ok(());
+        }
+
+        let cooled_down = crate::persistence::latest_notification_older_than(
+            &self.pool,
+            origin_uid,
+            alert_threshold.cooldown,
+        )
+        .await?;
+
+        if !cooled_down {
+            tracing::debug!(%origin_uid, ?alert_threshold, "failure rate is exceeded, but a notification has been sent recently");
+            return Ok(());
+        }
+
+        let subject = "Outage detected";
+        let message = format!("The failure rate of {uri} exceeds the SLA");
+
+        self.notifier
+            .notify(topic, "Outage detected", &message)
+            .await?;
+
+        let created_at = Utc::now();
+
+        let notification_uid = crate::persistence::insert_notification(
+            &self.pool, origin_uid, topic, subject, &message, created_at,
+        )
+        .await?;
+
+        tracing::info!(%origin_uid, %notification_uid, "routed a new notification");
 
         Ok(())
     }

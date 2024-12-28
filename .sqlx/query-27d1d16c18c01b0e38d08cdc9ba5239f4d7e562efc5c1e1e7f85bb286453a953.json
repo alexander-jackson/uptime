@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*) >= $2\n            FROM query_failure qf\n            JOIN origin o ON o.id = qf.origin_id\n            WHERE o.origin_uid = $1\n            AND qf.queried_at BETWEEN $3 AND $4\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "27d1d16c18c01b0e38d08cdc9ba5239f4d7e562efc5c1e1e7f85bb286453a953"
+}
