@@ -1,23 +1,86 @@
+/* Custom styles for the Uptime Monitor */
+
+/* Base styles */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  background-color: #1e201e;
-  color: #ecdfcc;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
-  max-width: 60em;
-  margin: 0 auto;
+  font-feature-settings: "rlig" 1, "calt" 1;
 }
 
-.container {
-  padding: 0px 40px;
+/* Custom animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-h1 {
-  text-align: center;
-  font-size: 50px;
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
 }
 
-table {
-  margin: 0 auto;
-  width: 100%;
-  text-align: center;
+/* Custom focus styles for better accessibility */
+.focus-ring:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Custom table hover effects */
+.table-hover:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.dark .table-hover:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Status indicator pulse animation */
+.status-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .5;
+  }
+}
+
+/* Custom scrollbar for dark mode */
+.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #374151;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #6b7280;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+    color: black !important;
+  }
 }
